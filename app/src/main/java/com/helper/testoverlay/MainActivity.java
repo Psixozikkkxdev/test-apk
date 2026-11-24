@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_OVERLAY = 1001;
     private static final int REQ_SCREEN = 1002;
-    private static final String DEFAULT_KEY = "AQ.Ab8RN6Kl3O22xkmT52NUn-EHDJkWHqnxpJJmUhgdmnt3iw3WiA";
+    private static final String DEFAULT_KEY = "AQ.Ab8RN6Lyt7fYJsIVJaNiJiQjIT3afnxxHOmUtfby825RIASx7w";
 
     private MediaProjectionManager projectionManager;
     private MediaProjection mediaProjection;
@@ -86,7 +86,6 @@ public class MainActivity extends Activity {
 
         projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
-        // Простий інтерфейс запуску
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor("#0F172A"));
@@ -158,12 +157,11 @@ public class MainActivity extends Activity {
             showOverlayWindow();
             isRunning = true;
             startAutoLoop();
-            moveTaskToBack(true); // Згортаємо додаток, залишаючи тільки плаваюче вікно
+            moveTaskToBack(true);
         }
     }
 
     private void setupVirtualDisplay() {
-        // Зменшуємо роздільну здатність у 2 рази для швидкої обробки
         int w = screenWidth / 2;
         int h = screenHeight / 2;
         imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
@@ -210,7 +208,6 @@ public class MainActivity extends Activity {
         answerTextView.setTypeface(null, Typeface.BOLD);
         overlayView.addView(answerTextView);
 
-        // Можливість перетягувати плашку пальцем по екрану
         overlayView.setOnTouchListener(new View.OnTouchListener() {
             private int initialY;
             private float initialTouchY;
@@ -295,9 +292,7 @@ public class MainActivity extends Activity {
     }
 
     private String askGemini(String base64Jpeg) throws Exception {
-        String endpoint = apiKey.startsWith("AQ.")
-                ? "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=" + apiKey
-                : "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + apiKey;
+        String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
         JSONObject textPart = new JSONObject();
         textPart.put("text", "На скріншоті відкрито онлайн-тест (На Урок або Всеосвіта). Напиши ТІЛЬКИ точний текст правильної відповіді (або кількох правильних варіантів через кому). Без зайвих слів.");
@@ -327,6 +322,7 @@ public class MainActivity extends Activity {
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("x-goog-api-key", apiKey);
         conn.setDoOutput(true);
 
         try (OutputStream os = conn.getOutputStream()) {
