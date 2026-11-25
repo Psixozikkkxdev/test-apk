@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_OVERLAY = 1001;
     private static final int REQ_SCREEN = 1002;
+    private static final int INTERVAL_SEC = 20;
     private static final String PREFS_NAME = "TestHelperPrefs";
     private static final String KEY_PREF = "saved_api_key";
 
@@ -65,7 +66,7 @@ public class MainActivity extends Activity {
     private LinearLayout overlayView;
     private TextView answerTextView;
     private TextView statusTextView;
-    private Button scanBtn;
+    private Button scanNowBtn;
 
     private EditText keyInput;
     private String apiKey = "";
@@ -73,7 +74,9 @@ public class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private boolean isRunning = false;
     private boolean isScanning = false;
+    private int secondsLeft = INTERVAL_SEC;
 
     private int screenWidth;
     private int screenHeight;
@@ -99,7 +102,7 @@ public class MainActivity extends Activity {
         root.setPadding(48, 64, 48, 48);
 
         TextView title = new TextView(this);
-        title.setText("AI Помічник (По натисканню)");
+        title.setText("AI Помічник (Авто-режим 20 с)");
         title.setTextColor(Color.WHITE);
         title.setTextSize(20f);
         title.setTypeface(null, Typeface.BOLD);
@@ -119,9 +122,10 @@ public class MainActivity extends Activity {
         root.addView(keyInput);
 
         Button startBtn = new Button(this);
-        startBtn.setText("1. Увімкнути плаваючу кнопку");
+        startBtn.setText("Старт (Авто-скріншот кожні 20 с)");
         startBtn.setBackgroundColor(Color.parseColor("#EF4444"));
         startBtn.setTextColor(Color.WHITE);
+        startBtn.setTypeface(null, Typeface.BOLD);
         startBtn.setOnClickListener(v -> {
             apiKey = keyInput.getText().toString().trim();
             if (apiKey.isEmpty()) {
@@ -135,7 +139,7 @@ public class MainActivity extends Activity {
         root.addView(startBtn);
 
         Button stopBtn = new Button(this);
-        stopBtn.setText("Зупинити та закрити плашку");
+        stopBtn.setText("Зупинити");
         stopBtn.setBackgroundColor(Color.parseColor("#334155"));
         stopBtn.setTextColor(Color.WHITE);
         LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(
@@ -170,6 +174,8 @@ public class MainActivity extends Activity {
             mediaProjection = projectionManager.getMediaProjection(resultCode, data);
             setupVirtualDisplay();
             showOverlayWindow();
+            isRunning = true;
+            startCountdownLoop();
             moveTaskToBack(true);
         }
     }
@@ -206,55 +212,58 @@ public class MainActivity extends Activity {
         overlayView = new LinearLayout(this);
         overlayView.setOrientation(LinearLayout.VERTICAL);
         overlayView.setBackgroundColor(Color.parseColor("#EB0F172A"));
-        overlayView.setPadding(24, 16, 24, 18);
+        overlayView.setPadding(24, 14, 24, 16);
 
-        // Верхній рядок: статус (для перетягування) + кнопка закриття
+        // Верхній рядок: таймер зворотного відліку + кнопка швидкого скану + закриття
         LinearLayout topRow = new LinearLayout(this);
         topRow.setOrientation(LinearLayout.HORIZONTAL);
         topRow.setGravity(Gravity.CENTER_VERTICAL);
 
         statusTextView = new TextView(this);
-        statusTextView.setText("↕ Перетягніть • Натисніть кнопку нижче");
+        statusTextView.setText("Авто-скрін через 20 с (↕ перетягніть)");
         statusTextView.setTextColor(Color.parseColor("#94A3B8"));
         statusTextView.setTextSize(11f);
         LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         statusTextView.setLayoutParams(statusLp);
         topRow.addView(statusTextView);
 
+        scanNowBtn = new Button(this);
+        scanNowBtn.setText("Зараз");
+        scanNowBtn.setTextSize(11f);
+        scanNowBtn.setTextColor(Color.WHITE);
+        scanNowBtn.setBackgroundColor(Color.parseColor("#2563EB"));
+        scanNowBtn.setPadding(18, 4, 18, 4);
+        scanNowBtn.setMinimumHeight(0);
+        scanNowBtn.setMinHeight(0);
+        scanNowBtn.setOnClickListener(v -> {
+            secondsLeft = INTERVAL_SEC;
+            captureAndSolve();
+        });
+        topRow.addView(scanNowBtn);
+
         TextView closeBtn = new TextView(this);
-        closeBtn.setText("  ✕  ");
+        closeBtn.setText("   ✕ ");
         closeBtn.setTextColor(Color.parseColor("#94A3B8"));
-        closeBtn.setTextSize(14f);
+        closeBtn.setTextSize(15f);
         closeBtn.setTypeface(null, Typeface.BOLD);
         closeBtn.setOnClickListener(v -> stopAll());
         topRow.addView(closeBtn);
 
         overlayView.addView(topRow);
 
-        // Блок відповіді
+        // Текст правильної відповіді
         answerTextView = new TextView(this);
-        answerTextView.setText("Натисніть «Знайти відповідь»");
+        answerTextView.setText("Очікування першого кадру...");
         answerTextView.setTextColor(Color.parseColor("#FF4D4D"));
         answerTextView.setTextSize(17f);
         answerTextView.setTypeface(null, Typeface.BOLD);
         LinearLayout.LayoutParams ansLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        ansLp.setMargins(0, 8, 0, 12);
+        ansLp.setMargins(0, 8, 0, 2);
         answerTextView.setLayoutParams(ansLp);
         overlayView.addView(answerTextView);
 
-        // Кнопка запуску сканування по натисканню
-        scanBtn = new Button(this);
-        scanBtn.setText("🔍 Знайти відповідь");
-        scanBtn.setBackgroundColor(Color.parseColor("#DC2626"));
-        scanBtn.setTextColor(Color.WHITE);
-        scanBtn.setTextSize(14f);
-        scanBtn.setTypeface(null, Typeface.BOLD);
-        scanBtn.setPadding(16, 12, 16, 12);
-        scanBtn.setOnClickListener(v -> captureAndSolve());
-        overlayView.addView(scanBtn);
-
-        // Перетягування плашки за верхній рядок або текст
+        // Перетягування плашки
         View.OnTouchListener dragListener = new View.OnTouchListener() {
             private int initialY;
             private float initialTouchY;
@@ -280,19 +289,41 @@ public class MainActivity extends Activity {
         windowManager.addView(overlayView, params);
     }
 
+    private void startCountdownLoop() {
+        secondsLeft = 3; // Перший кадр робимо через 3 с після старту, далі — кожні 20 с
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!isRunning) return;
+
+                if (!isScanning) {
+                    secondsLeft--;
+                    if (secondsLeft <= 0) {
+                        secondsLeft = INTERVAL_SEC;
+                        captureAndSolve();
+                    } else if (statusTextView != null) {
+                        statusTextView.setText("Авто-скрін через " + secondsLeft + " с (↕ перетягніть)");
+                    }
+                }
+                handler.postDelayed(this, 1000);
+            }
+        }, 1000);
+    }
+
     private void captureAndSolve() {
         if (isScanning || imageReader == null) return;
         Image image = imageReader.acquireLatestImage();
         if (image == null) {
-            statusTextView.setText("Кадр не оновився — свайпніть екран і натисніть ще раз");
+            if (statusTextView != null) {
+                statusTextView.setText("Екран не оновився • наступний через " + secondsLeft + " с");
+            }
             return;
         }
 
         isScanning = true;
         handler.post(() -> {
-            scanBtn.setEnabled(false);
-            scanBtn.setText("⏳ ШІ думає...");
-            statusTextView.setText("Відправка скріншота...");
+            if (scanNowBtn != null) scanNowBtn.setEnabled(false);
+            if (statusTextView != null) statusTextView.setText("⏳ ШІ аналізує скріншот...");
         });
 
         try {
@@ -325,22 +356,29 @@ public class MainActivity extends Activity {
                     String answer = askGroqAutoModel(base64Img);
 
                     handler.post(() -> {
-                        SpannableString content = new SpannableString("Відповідь: " + answer);
-                        content.setSpan(new UnderlineSpan(), 0, content.length(), 0);
-                        answerTextView.setText(content);
-                        statusTextView.setText("Готово (" + cachedVisionModel + ")");
+                        if (answerTextView != null) {
+                            SpannableString content = new SpannableString("Відповідь: " + answer);
+                            content.setSpan(new UnderlineSpan(), 0, content.length(), 0);
+                            answerTextView.setText(content);
+                        }
+                        if (statusTextView != null) {
+                            statusTextView.setText("Оновлено • наступний через " + secondsLeft + " с");
+                        }
                     });
                 } catch (Exception e) {
                     String msg = e.getMessage() != null ? e.getMessage() : "Помилка запиту";
-                    cachedVisionModel = null;
-                    handler.post(() -> statusTextView.setText("Помилка: " + msg));
+                    if (!msg.contains("429")) {
+                        cachedVisionModel = null;
+                    }
+                    handler.post(() -> {
+                        if (statusTextView != null) {
+                            statusTextView.setText("Помилка: " + msg);
+                        }
+                    });
                 } finally {
                     isScanning = false;
                     handler.post(() -> {
-                        if (scanBtn != null) {
-                            scanBtn.setEnabled(true);
-                            scanBtn.setText("🔍 Знайти відповідь");
-                        }
+                        if (scanNowBtn != null) scanNowBtn.setEnabled(true);
                     });
                 }
             });
@@ -348,10 +386,7 @@ public class MainActivity extends Activity {
             image.close();
             isScanning = false;
             handler.post(() -> {
-                if (scanBtn != null) {
-                    scanBtn.setEnabled(true);
-                    scanBtn.setText("🔍 Знайти відповідь");
-                }
+                if (scanNowBtn != null) scanNowBtn.setEnabled(true);
             });
         }
     }
@@ -471,6 +506,7 @@ public class MainActivity extends Activity {
     }
 
     private void stopAll() {
+        isRunning = false;
         if (overlayView != null && windowManager != null) {
             windowManager.removeView(overlayView);
             overlayView = null;
