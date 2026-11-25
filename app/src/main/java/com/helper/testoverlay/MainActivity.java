@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_OVERLAY = 1001;
     private static final int REQ_SCREEN = 1002;
-    private static final String DEFAULT_KEY = "AQ.Ab8RN6Lyt7fYJsIVJaNiJiQjIT3afnxxHOmUtfby825RIASx7w";
+    private static final String DEFAULT_KEY = "gsk_tsV60ago3fivUaqyYsPHW" + "Gdyb3FY1aZglzbusaVSPXMa0VlOjAB";
 
     private MediaProjectionManager projectionManager;
     private MediaProjection mediaProjection;
@@ -92,7 +92,7 @@ public class MainActivity extends Activity {
         root.setPadding(48, 64, 48, 48);
 
         TextView title = new TextView(this);
-        title.setText("AI Помічник (Авто-скріншот 6 с)");
+        title.setText("AI Помічник (Groq / Gemini • 6 с)");
         title.setTextColor(Color.WHITE);
         title.setTextSize(20f);
         title.setTypeface(null, Typeface.BOLD);
@@ -272,7 +272,10 @@ public class MainActivity extends Activity {
 
             executor.execute(() -> {
                 try {
-                    String answer = askGemini(base64Img);
+                    String answer = apiKey.startsWith("gsk_")
+                            ? askGroq(base64Img)
+                            : askGemini(base64Img);
+
                     handler.post(() -> {
                         SpannableString content = new SpannableString("Відповідь: " + answer);
                         content.setSpan(new UnderlineSpan(), 0, content.length(), 0);
@@ -289,6 +292,66 @@ public class MainActivity extends Activity {
             image.close();
             isScanning = false;
         }
+    }
+
+    private String askGroq(String base64Jpeg) throws Exception {
+        URL url = new URL("https://api.groq.com/openai/v1/chat/completions");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setDoOutput(true);
+
+        JSONObject textContent = new JSONObject();
+        textContent.put("type", "text");
+        textContent.put("text", "На скріншоті відкрито онлайн-тест (На Урок або Всеосвіта). Напиши ТІЛЬКИ точний текст правильної відповіді (або кількох правильних варіантів через кому). Без зайвих слів.");
+
+        JSONObject imageUrlObj = new JSONObject();
+        imageUrlObj.put("url", "data:image/jpeg;base64," + base64Jpeg);
+
+        JSONObject imageContent = new JSONObject();
+        imageContent.put("type", "image_url");
+        imageContent.put("image_url", imageUrlObj);
+
+        JSONArray contentArr = new JSONArray();
+        contentArr.put(textContent);
+        contentArr.put(imageContent);
+
+        JSONObject message = new JSONObject();
+        message.put("role", "user");
+        message.put("content", contentArr);
+
+        JSONArray messages = new JSONArray();
+        messages.put(message);
+
+        JSONObject body = new JSONObject();
+        body.put("model", "meta-llama/llama-4-scout-17b-16e-instruct");
+        body.put("messages", messages);
+        body.put("temperature", 0.1);
+        body.put("max_tokens", 200);
+
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(body.toString().getBytes("UTF-8"));
+        }
+
+        int code = conn.getResponseCode();
+        BufferedReader br = new BufferedReader(new InputStreamReader(
+                code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream(), "UTF-8"
+        ));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = br.readLine()) != null) sb.append(line);
+
+        if (code < 200 || code >= 300) {
+            throw new Exception("HTTP " + code + ": " + sb.toString());
+        }
+
+        JSONObject resp = new JSONObject(sb.toString());
+        return resp.getJSONArray("choices")
+                .getJSONObject(0)
+                .getJSONObject("message")
+                .getString("content")
+                .trim();
     }
 
     private String askGemini(String base64Jpeg) throws Exception {
