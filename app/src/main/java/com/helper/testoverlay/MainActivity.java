@@ -65,6 +65,7 @@ public class MainActivity extends Activity {
     private LinearLayout overlayView;
     private TextView answerTextView;
     private TextView statusTextView;
+    private Button scanBtn;
 
     private EditText keyInput;
     private String apiKey = "";
@@ -72,7 +73,6 @@ public class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-    private boolean isRunning = false;
     private boolean isScanning = false;
 
     private int screenWidth;
@@ -99,7 +99,7 @@ public class MainActivity extends Activity {
         root.setPadding(48, 64, 48, 48);
 
         TextView title = new TextView(this);
-        title.setText("AI Помічник (Авто-скріншот 6 с)");
+        title.setText("AI Помічник (По натисканню)");
         title.setTextColor(Color.WHITE);
         title.setTextSize(20f);
         title.setTypeface(null, Typeface.BOLD);
@@ -119,7 +119,7 @@ public class MainActivity extends Activity {
         root.addView(keyInput);
 
         Button startBtn = new Button(this);
-        startBtn.setText("1. Увімкнути плаваюче вікно та авто-режим");
+        startBtn.setText("1. Увімкнути плаваючу кнопку");
         startBtn.setBackgroundColor(Color.parseColor("#EF4444"));
         startBtn.setTextColor(Color.WHITE);
         startBtn.setOnClickListener(v -> {
@@ -135,7 +135,7 @@ public class MainActivity extends Activity {
         root.addView(startBtn);
 
         Button stopBtn = new Button(this);
-        stopBtn.setText("Зупинити");
+        stopBtn.setText("Зупинити та закрити плашку");
         stopBtn.setBackgroundColor(Color.parseColor("#334155"));
         stopBtn.setTextColor(Color.WHITE);
         LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(
@@ -170,8 +170,6 @@ public class MainActivity extends Activity {
             mediaProjection = projectionManager.getMediaProjection(resultCode, data);
             setupVirtualDisplay();
             showOverlayWindow();
-            isRunning = true;
-            startAutoLoop();
             moveTaskToBack(true);
         }
     }
@@ -203,27 +201,61 @@ public class MainActivity extends Activity {
                 PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.TOP | Gravity.START;
-        params.y = 80;
+        params.y = 60;
 
         overlayView = new LinearLayout(this);
         overlayView.setOrientation(LinearLayout.VERTICAL);
-        overlayView.setBackgroundColor(Color.parseColor("#E60F172A"));
-        overlayView.setPadding(28, 20, 28, 20);
+        overlayView.setBackgroundColor(Color.parseColor("#EB0F172A"));
+        overlayView.setPadding(24, 16, 24, 18);
+
+        // Верхній рядок: статус (для перетягування) + кнопка закриття
+        LinearLayout topRow = new LinearLayout(this);
+        topRow.setOrientation(LinearLayout.HORIZONTAL);
+        topRow.setGravity(Gravity.CENTER_VERTICAL);
 
         statusTextView = new TextView(this);
-        statusTextView.setText("Авто-скан кожні 6 с (перетягніть плашку за потреби)");
+        statusTextView.setText("↕ Перетягніть • Натисніть кнопку нижче");
         statusTextView.setTextColor(Color.parseColor("#94A3B8"));
         statusTextView.setTextSize(11f);
-        overlayView.addView(statusTextView);
+        LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        statusTextView.setLayoutParams(statusLp);
+        topRow.addView(statusTextView);
 
+        TextView closeBtn = new TextView(this);
+        closeBtn.setText("  ✕  ");
+        closeBtn.setTextColor(Color.parseColor("#94A3B8"));
+        closeBtn.setTextSize(14f);
+        closeBtn.setTypeface(null, Typeface.BOLD);
+        closeBtn.setOnClickListener(v -> stopAll());
+        topRow.addView(closeBtn);
+
+        overlayView.addView(topRow);
+
+        // Блок відповіді
         answerTextView = new TextView(this);
-        answerTextView.setText("Очікування кадру...");
+        answerTextView.setText("Натисніть «Знайти відповідь»");
         answerTextView.setTextColor(Color.parseColor("#FF4D4D"));
-        answerTextView.setTextSize(16f);
+        answerTextView.setTextSize(17f);
         answerTextView.setTypeface(null, Typeface.BOLD);
+        LinearLayout.LayoutParams ansLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ansLp.setMargins(0, 8, 0, 12);
+        answerTextView.setLayoutParams(ansLp);
         overlayView.addView(answerTextView);
 
-        overlayView.setOnTouchListener(new View.OnTouchListener() {
+        // Кнопка запуску сканування по натисканню
+        scanBtn = new Button(this);
+        scanBtn.setText("🔍 Знайти відповідь");
+        scanBtn.setBackgroundColor(Color.parseColor("#DC2626"));
+        scanBtn.setTextColor(Color.WHITE);
+        scanBtn.setTextSize(14f);
+        scanBtn.setTypeface(null, Typeface.BOLD);
+        scanBtn.setPadding(16, 12, 16, 12);
+        scanBtn.setOnClickListener(v -> captureAndSolve());
+        overlayView.addView(scanBtn);
+
+        // Перетягування плашки за верхній рядок або текст
+        View.OnTouchListener dragListener = new View.OnTouchListener() {
             private int initialY;
             private float initialTouchY;
 
@@ -241,29 +273,27 @@ public class MainActivity extends Activity {
                 }
                 return false;
             }
-        });
+        };
+        topRow.setOnTouchListener(dragListener);
+        answerTextView.setOnTouchListener(dragListener);
 
         windowManager.addView(overlayView, params);
-    }
-
-    private void startAutoLoop() {
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (!isRunning) return;
-                captureAndSolve();
-                handler.postDelayed(this, 6000);
-            }
-        }, 1500);
     }
 
     private void captureAndSolve() {
         if (isScanning || imageReader == null) return;
         Image image = imageReader.acquireLatestImage();
-        if (image == null) return;
+        if (image == null) {
+            statusTextView.setText("Кадр не оновився — свайпніть екран і натисніть ще раз");
+            return;
+        }
 
         isScanning = true;
-        handler.post(() -> statusTextView.setText("ШІ аналізує екран..."));
+        handler.post(() -> {
+            scanBtn.setEnabled(false);
+            scanBtn.setText("⏳ ШІ думає...");
+            statusTextView.setText("Відправка скріншота...");
+        });
 
         try {
             Image.Plane[] planes = image.getPlanes();
@@ -272,18 +302,23 @@ public class MainActivity extends Activity {
             int rowStride = planes[0].getRowStride();
             int rowPadding = rowStride - pixelStride * image.getWidth();
 
-            Bitmap bitmap = Bitmap.createBitmap(
+            Bitmap rawBitmap = Bitmap.createBitmap(
                     image.getWidth() + rowPadding / pixelStride,
                     image.getHeight(),
                     Bitmap.Config.ARGB_8888
             );
-            bitmap.copyPixelsFromBuffer(buffer);
+            rawBitmap.copyPixelsFromBuffer(buffer);
             image.close();
 
+            int targetW = 480;
+            int targetH = Math.max(1, (int) ((float) rawBitmap.getHeight() * targetW / rawBitmap.getWidth()));
+            Bitmap scaledBitmap = Bitmap.createScaledBitmap(rawBitmap, targetW, targetH, true);
+            rawBitmap.recycle();
+
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, baos);
+            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 55, baos);
             String base64Img = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-            bitmap.recycle();
+            scaledBitmap.recycle();
 
             executor.execute(() -> {
                 try {
@@ -293,18 +328,31 @@ public class MainActivity extends Activity {
                         SpannableString content = new SpannableString("Відповідь: " + answer);
                         content.setSpan(new UnderlineSpan(), 0, content.length(), 0);
                         answerTextView.setText(content);
-                        statusTextView.setText("Модель: " + cachedVisionModel + " • Оновлено (6 с)");
+                        statusTextView.setText("Готово (" + cachedVisionModel + ")");
                     });
                 } catch (Exception e) {
+                    String msg = e.getMessage() != null ? e.getMessage() : "Помилка запиту";
                     cachedVisionModel = null;
-                    handler.post(() -> statusTextView.setText("Помилка: " + e.getMessage()));
+                    handler.post(() -> statusTextView.setText("Помилка: " + msg));
                 } finally {
                     isScanning = false;
+                    handler.post(() -> {
+                        if (scanBtn != null) {
+                            scanBtn.setEnabled(true);
+                            scanBtn.setText("🔍 Знайти відповідь");
+                        }
+                    });
                 }
             });
         } catch (Exception e) {
             image.close();
             isScanning = false;
+            handler.post(() -> {
+                if (scanBtn != null) {
+                    scanBtn.setEnabled(true);
+                    scanBtn.setText("🔍 Знайти відповідь");
+                }
+            });
         }
     }
 
@@ -329,26 +377,16 @@ public class MainActivity extends Activity {
         JSONObject resp = new JSONObject(sb.toString());
         JSONArray data = resp.getJSONArray("data");
 
-        List<String> prioritized = new ArrayList<>();
-        List<String> allIds = new ArrayList<>();
-
+        List<String> visionCandidates = new ArrayList<>();
         for (int i = 0; i < data.length(); i++) {
             String id = data.getJSONObject(i).getString("id");
             String lower = id.toLowerCase();
-            // Пропускаємо аудіо (whisper) та моделі модерації (guard)
-            if (lower.contains("whisper") || lower.contains("guard") || lower.contains("tts")) {
-                continue;
-            }
-            allIds.add(id);
-            if (lower.contains("vision") || lower.contains("llama-4") || lower.contains("vl") || lower.contains("pixtral") || lower.contains("multimodal")) {
-                prioritized.add(id);
+            if (lower.contains("qwen") || lower.contains("vision") || lower.contains("vl")
+                    || lower.contains("pixtral") || lower.contains("llama-4")) {
+                visionCandidates.add(id);
             }
         }
-
-        if (!prioritized.isEmpty()) {
-            return prioritized;
-        }
-        return allIds;
+        return visionCandidates;
     }
 
     private String askGroqAutoModel(String base64Jpeg) throws Exception {
@@ -369,7 +407,7 @@ public class MainActivity extends Activity {
             }
         }
 
-        throw lastEx != null ? lastEx : new Exception("Не знайдено жодної моделі з підтримкою фото. Доступні: " + candidates.toString());
+        throw lastEx != null ? lastEx : new Exception("Не знайдено Vision-модель у Groq");
     }
 
     private String callGroqModel(String base64Jpeg, String modelName) throws Exception {
@@ -382,7 +420,7 @@ public class MainActivity extends Activity {
 
         JSONObject textContent = new JSONObject();
         textContent.put("type", "text");
-        textContent.put("text", "На скріншоті відкрито онлайн-тест (На Урок або Всеосвіта). Напиши ТІЛЬКИ точний текст правильної відповіді (або кількох правильних варіантів через кому). Без зайвих слів.");
+        textContent.put("text", "На скріншоті тест. Напиши ТІЛЬКИ точну правильну відповідь (літеру і текст варіанту). Без зайвих слів.");
 
         JSONObject imageUrlObj = new JSONObject();
         imageUrlObj.put("url", "data:image/jpeg;base64," + base64Jpeg);
@@ -406,7 +444,7 @@ public class MainActivity extends Activity {
         body.put("model", modelName);
         body.put("messages", messages);
         body.put("temperature", 0.1);
-        body.put("max_tokens", 200);
+        body.put("max_tokens", 120);
 
         try (OutputStream os = conn.getOutputStream()) {
             os.write(body.toString().getBytes("UTF-8"));
@@ -433,7 +471,6 @@ public class MainActivity extends Activity {
     }
 
     private void stopAll() {
-        isRunning = false;
         if (overlayView != null && windowManager != null) {
             windowManager.removeView(overlayView);
             overlayView = null;
