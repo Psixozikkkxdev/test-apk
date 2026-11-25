@@ -3,6 +3,7 @@ package com.helper.testoverlay;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
@@ -50,7 +51,8 @@ public class MainActivity extends Activity {
 
     private static final int REQ_OVERLAY = 1001;
     private static final int REQ_SCREEN = 1002;
-    private static final String DEFAULT_KEY = "gsk_tsV60ago3fivUaqyYsPHW" + "Gdyb3FY1aZglzbusaVSPXMa0VlOjAB";
+    private static final String PREFS_NAME = "TestHelperPrefs";
+    private static final String KEY_PREF = "saved_api_key";
 
     private MediaProjectionManager projectionManager;
     private MediaProjection mediaProjection;
@@ -63,7 +65,7 @@ public class MainActivity extends Activity {
     private TextView statusTextView;
 
     private EditText keyInput;
-    private String apiKey = DEFAULT_KEY;
+    private String apiKey = "";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -85,6 +87,8 @@ public class MainActivity extends Activity {
         screenDensity = metrics.densityDpi;
 
         projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        apiKey = prefs.getString(KEY_PREF, "");
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -92,14 +96,16 @@ public class MainActivity extends Activity {
         root.setPadding(48, 64, 48, 48);
 
         TextView title = new TextView(this);
-        title.setText("AI Помічник (Groq / Gemini • 6 с)");
+        title.setText("AI Помічник (Авто-скріншот 6 с)");
         title.setTextColor(Color.WHITE);
         title.setTextSize(20f);
         title.setTypeface(null, Typeface.BOLD);
         root.addView(title);
 
         keyInput = new EditText(this);
-        keyInput.setText(DEFAULT_KEY);
+        keyInput.setHint("Вставте ваш Groq API Key (gsk_...)");
+        keyInput.setHintTextColor(Color.parseColor("#64748B"));
+        keyInput.setText(apiKey);
         keyInput.setTextColor(Color.WHITE);
         keyInput.setBackgroundColor(Color.parseColor("#1E293B"));
         keyInput.setPadding(24, 24, 24, 24);
@@ -115,6 +121,11 @@ public class MainActivity extends Activity {
         startBtn.setTextColor(Color.WHITE);
         startBtn.setOnClickListener(v -> {
             apiKey = keyInput.getText().toString().trim();
+            if (apiKey.isEmpty()) {
+                Toast.makeText(this, "Спочатку вставте API-ключ!", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            prefs.edit().putString(KEY_PREF, apiKey).apply();
             checkPermissionsAndStart();
         });
         root.addView(startBtn);
@@ -272,9 +283,7 @@ public class MainActivity extends Activity {
 
             executor.execute(() -> {
                 try {
-                    String answer = apiKey.startsWith("gsk_")
-                            ? askGroq(base64Img)
-                            : askGemini(base64Img);
+                    String answer = askGroqWithFallback(base64Img);
 
                     handler.post(() -> {
                         SpannableString content = new SpannableString("Відповідь: " + answer);
@@ -294,7 +303,23 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String askGroq(String base64Jpeg) throws Exception {
+    private String askGroqWithFallback(String base64Jpeg) throws Exception {
+        String[] models = {
+                "llama-3.2-11b-vision-preview",
+                "llama-3.2-90b-vision-preview"
+        };
+        Exception lastEx = null;
+        for (String model : models) {
+            try {
+                return callGroqModel(base64Jpeg, model);
+            } catch (Exception e) {
+                lastEx = e;
+            }
+        }
+        throw lastEx != null ? lastEx : new Exception("Не вдалося отримати відповідь від Groq");
+    }
+
+    private String callGroqModel(String base64Jpeg, String modelName) throws Exception {
         URL url = new URL("https://api.groq.com/openai/v1/chat/completions");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
@@ -325,7 +350,7 @@ public class MainActivity extends Activity {
         messages.put(message);
 
         JSONObject body = new JSONObject();
-        body.put("model", "meta-llama/llama-4-scout-17b-16e-instruct");
+        body.put("model", modelName);
         body.put("messages", messages);
         body.put("temperature", 0.1);
         body.put("max_tokens", 200);
@@ -351,66 +376,6 @@ public class MainActivity extends Activity {
                 .getJSONObject(0)
                 .getJSONObject("message")
                 .getString("content")
-                .trim();
-    }
-
-    private String askGemini(String base64Jpeg) throws Exception {
-        String endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-
-        JSONObject textPart = new JSONObject();
-        textPart.put("text", "На скріншоті відкрито онлайн-тест (На Урок або Всеосвіта). Напиши ТІЛЬКИ точний текст правильної відповіді (або кількох правильних варіантів через кому). Без зайвих слів.");
-
-        JSONObject inlineData = new JSONObject();
-        inlineData.put("mimeType", "image/jpeg");
-        inlineData.put("data", base64Jpeg);
-
-        JSONObject imagePart = new JSONObject();
-        imagePart.put("inlineData", inlineData);
-
-        JSONArray parts = new JSONArray();
-        parts.put(textPart);
-        parts.put(imagePart);
-
-        JSONObject contentObj = new JSONObject();
-        contentObj.put("role", "user");
-        contentObj.put("parts", parts);
-
-        JSONArray contents = new JSONArray();
-        contents.put(contentObj);
-
-        JSONObject body = new JSONObject();
-        body.put("contents", contents);
-
-        URL url = new URL(endpoint);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("x-goog-api-key", apiKey);
-        conn.setDoOutput(true);
-
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(body.toString().getBytes("UTF-8"));
-        }
-
-        int code = conn.getResponseCode();
-        BufferedReader br = new BufferedReader(new InputStreamReader(
-                code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream(), "UTF-8"
-        ));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = br.readLine()) != null) sb.append(line);
-
-        if (code < 200 || code >= 300) {
-            throw new Exception("HTTP " + code + ": " + sb.toString());
-        }
-
-        JSONObject resp = new JSONObject(sb.toString());
-        return resp.getJSONArray("candidates")
-                .getJSONObject(0)
-                .getJSONObject("content")
-                .getJSONArray("parts")
-                .getJSONObject(0)
-                .getString("text")
                 .trim();
     }
 
