@@ -44,6 +44,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -66,6 +68,7 @@ public class MainActivity extends Activity {
 
     private EditText keyInput;
     private String apiKey = "";
+    private String cachedVisionModel = null;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -125,6 +128,7 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Спочатку вставте API-ключ!", Toast.LENGTH_SHORT).show();
                 return;
             }
+            cachedVisionModel = null;
             prefs.edit().putString(KEY_PREF, apiKey).apply();
             checkPermissionsAndStart();
         });
@@ -283,15 +287,16 @@ public class MainActivity extends Activity {
 
             executor.execute(() -> {
                 try {
-                    String answer = askGroqWithFallback(base64Img);
+                    String answer = askGroqAutoModel(base64Img);
 
                     handler.post(() -> {
                         SpannableString content = new SpannableString("Відповідь: " + answer);
                         content.setSpan(new UnderlineSpan(), 0, content.length(), 0);
                         answerTextView.setText(content);
-                        statusTextView.setText("Оновлено (наступне через 6 с)");
+                        statusTextView.setText("Модель: " + cachedVisionModel + " • Оновлено (6 с)");
                     });
                 } catch (Exception e) {
+                    cachedVisionModel = null;
                     handler.post(() -> statusTextView.setText("Помилка: " + e.getMessage()));
                 } finally {
                     isScanning = false;
@@ -303,20 +308,68 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String askGroqWithFallback(String base64Jpeg) throws Exception {
-        String[] models = {
-                "llama-3.2-11b-vision-preview",
-                "llama-3.2-90b-vision-preview"
-        };
+    private List<String> fetchAvailableVisionModels() throws Exception {
+        URL url = new URL("https://api.groq.com/openai/v1/models");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+
+        int code = conn.getResponseCode();
+        BufferedReader br = new BufferedReader(new InputStreamReader(
+                code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream(), "UTF-8"
+        ));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = br.readLine()) != null) sb.append(line);
+
+        if (code < 200 || code >= 300) {
+            throw new Exception("Models HTTP " + code + ": " + sb.toString());
+        }
+
+        JSONObject resp = new JSONObject(sb.toString());
+        JSONArray data = resp.getJSONArray("data");
+
+        List<String> prioritized = new ArrayList<>();
+        List<String> allIds = new ArrayList<>();
+
+        for (int i = 0; i < data.length(); i++) {
+            String id = data.getJSONObject(i).getString("id");
+            String lower = id.toLowerCase();
+            // Пропускаємо аудіо (whisper) та моделі модерації (guard)
+            if (lower.contains("whisper") || lower.contains("guard") || lower.contains("tts")) {
+                continue;
+            }
+            allIds.add(id);
+            if (lower.contains("vision") || lower.contains("llama-4") || lower.contains("vl") || lower.contains("pixtral") || lower.contains("multimodal")) {
+                prioritized.add(id);
+            }
+        }
+
+        if (!prioritized.isEmpty()) {
+            return prioritized;
+        }
+        return allIds;
+    }
+
+    private String askGroqAutoModel(String base64Jpeg) throws Exception {
+        if (cachedVisionModel != null) {
+            return callGroqModel(base64Jpeg, cachedVisionModel);
+        }
+
+        List<String> candidates = fetchAvailableVisionModels();
         Exception lastEx = null;
-        for (String model : models) {
+
+        for (String modelId : candidates) {
             try {
-                return callGroqModel(base64Jpeg, model);
+                String res = callGroqModel(base64Jpeg, modelId);
+                cachedVisionModel = modelId;
+                return res;
             } catch (Exception e) {
                 lastEx = e;
             }
         }
-        throw lastEx != null ? lastEx : new Exception("Не вдалося отримати відповідь від Groq");
+
+        throw lastEx != null ? lastEx : new Exception("Не знайдено жодної моделі з підтримкою фото. Доступні: " + candidates.toString());
     }
 
     private String callGroqModel(String base64Jpeg, String modelName) throws Exception {
@@ -368,7 +421,7 @@ public class MainActivity extends Activity {
         while ((line = br.readLine()) != null) sb.append(line);
 
         if (code < 200 || code >= 300) {
-            throw new Exception("HTTP " + code + ": " + sb.toString());
+            throw new Exception("HTTP " + code + " (" + modelName + "): " + sb.toString());
         }
 
         JSONObject resp = new JSONObject(sb.toString());
