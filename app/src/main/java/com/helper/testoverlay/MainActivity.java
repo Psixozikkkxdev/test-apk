@@ -21,6 +21,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.SpannableString;
+import android.text.method.ScrollingMovementMethod;
 import android.text.style.UnderlineSpan;
 import android.util.Base64;
 import android.util.DisplayMetrics;
@@ -102,7 +103,7 @@ public class MainActivity extends Activity {
         root.setPadding(48, 64, 48, 48);
 
         TextView title = new TextView(this);
-        title.setText("AI Помічник (Авто-режим 20 с)");
+        title.setText("AI Помічник (Тести + Відкриті відповіді)");
         title.setTextColor(Color.WHITE);
         title.setTextSize(20f);
         title.setTypeface(null, Typeface.BOLD);
@@ -251,12 +252,14 @@ public class MainActivity extends Activity {
 
         overlayView.addView(topRow);
 
-        // Текст правильної відповіді
+        // Текст правильної відповіді (підтримує як варіанти А/Б/В/Г, так і цілі речення)
         answerTextView = new TextView(this);
         answerTextView.setText("Очікування першого кадру...");
         answerTextView.setTextColor(Color.parseColor("#FF4D4D"));
-        answerTextView.setTextSize(17f);
+        answerTextView.setTextSize(16f);
         answerTextView.setTypeface(null, Typeface.BOLD);
+        answerTextView.setMaxLines(6);
+        answerTextView.setMovementMethod(new ScrollingMovementMethod());
         LinearLayout.LayoutParams ansLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         ansLp.setMargins(0, 8, 0, 2);
@@ -290,7 +293,7 @@ public class MainActivity extends Activity {
     }
 
     private void startCountdownLoop() {
-        secondsLeft = 3; // Перший кадр робимо через 3 с після старту, далі — кожні 20 с
+        secondsLeft = 3;
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -323,7 +326,7 @@ public class MainActivity extends Activity {
         isScanning = true;
         handler.post(() -> {
             if (scanNowBtn != null) scanNowBtn.setEnabled(false);
-            if (statusTextView != null) statusTextView.setText("⏳ ШІ аналізує скріншот...");
+            if (statusTextView != null) statusTextView.setText("⏳ ШІ аналізує завдання...");
         });
 
         try {
@@ -341,13 +344,13 @@ public class MainActivity extends Activity {
             rawBitmap.copyPixelsFromBuffer(buffer);
             image.close();
 
-            int targetW = 480;
+            int targetW = 540;
             int targetH = Math.max(1, (int) ((float) rawBitmap.getHeight() * targetW / rawBitmap.getWidth()));
             Bitmap scaledBitmap = Bitmap.createScaledBitmap(rawBitmap, targetW, targetH, true);
             rawBitmap.recycle();
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 55, baos);
+            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 60, baos);
             String base64Img = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
             scaledBitmap.recycle();
 
@@ -360,6 +363,7 @@ public class MainActivity extends Activity {
                             SpannableString content = new SpannableString("Відповідь: " + answer);
                             content.setSpan(new UnderlineSpan(), 0, content.length(), 0);
                             answerTextView.setText(content);
+                            answerTextView.scrollTo(0, 0);
                         }
                         if (statusTextView != null) {
                             statusTextView.setText("Оновлено • наступний через " + secondsLeft + " с");
@@ -455,7 +459,10 @@ public class MainActivity extends Activity {
 
         JSONObject textContent = new JSONObject();
         textContent.put("type", "text");
-        textContent.put("text", "На скріншоті тест. Напиши ТІЛЬКИ точну правильну відповідь (літеру і текст варіанту). Без зайвих слів.");
+        textContent.put("text", "На скріншоті шкільне завдання або тест. Визнач тип завдання і дай ТІЛЬКИ готову правильну відповідь без зайвих вступів:\n" +
+                "1) Якщо є варіанти відповідей (А, Б, В, Г тощо) — напиши правильну літеру та текст варіанту.\n" +
+                "2) Якщо це відкрите питання, задача, переклад або поле для вводу тексту — напиши точну відповідь або готове правильне речення (1–3 речення українською чи мовою завдання).\n" +
+                "3) Якщо завдання на відповідність — напиши пари (наприклад: 1-Б, 2-Г, 3-А).");
 
         JSONObject imageUrlObj = new JSONObject();
         imageUrlObj.put("url", "data:image/jpeg;base64," + base64Jpeg);
@@ -478,8 +485,8 @@ public class MainActivity extends Activity {
         JSONObject body = new JSONObject();
         body.put("model", modelName);
         body.put("messages", messages);
-        body.put("temperature", 0.1);
-        body.put("max_tokens", 120);
+        body.put("temperature", 0.2);
+        body.put("max_tokens", 350);
 
         try (OutputStream os = conn.getOutputStream()) {
             os.write(body.toString().getBytes("UTF-8"));
